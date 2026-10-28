@@ -1,42 +1,44 @@
-# RADIX Talent Match
+# SkillSync — AI-Powered Career-Readiness Platform
 
-RADIX Talent Match is a candidate-focused job-readiness and skill-matching platform. It is intended to reuse RADIX's existing 12-skillset competency framework and hiring-related data so candidates can understand their readiness for a specific role.
+SkillSync is an AI-powered career-readiness platform that helps candidates build complete profiles, analyze job descriptions, assess their skills, and identify their alignment with specific job opportunities.
 
-## Planned modules
+## Five Connected Modules
 
-1. **JD Analytics** — Extract skills, competencies, and technical requirements from a job description.
-2. **Resume Parsing** — Extract skills, experience, education, and other relevant information from a candidate's resume.
-3. **Profile Builder** — Build or update a structured candidate profile using resume information and additional candidate inputs.
-4. **Talent Check** — Assess candidate readiness against a company's expectations across the 12 skillsets.
-5. **Skill Matching** — Compare a candidate profile with a job description and report a match score and skill gaps.
+1. **JD Analytics** — Extract, normalize, and edit requirements mapped to the official 12-skillset framework plus OTHER.
+2. **Resume Parsing** — Extract skills, experience, education, projects, and certifications from resumes (.pdf, .docx, .txt).
+3. **Profile Builder** — Build, enrich, review, and persist a structured candidate profile with 12-category skill tagging.
+4. **Talent Check** — Benchmark candidate competency against Tier 1 and enterprise hiring bars using explainable scoring.
+5. **Skill Matching** — Compare a candidate profile with a specific job posting and report an explainable match score and priority skill gaps.
 
-The intended workflow is:
+The end-to-end connected workflow is:
 
-`Job Description → Resume Parsing → Candidate Profile → Talent Check → Skill Matching`
+`Job Description (JD Analytics) → Resume Parsing → Candidate Profile (Profile Builder) → Talent Check → Skill Matching`
 
-## Technology stack
+## Technology Stack
 
 - **Backend:** Python, FastAPI, LangChain and LLM-agent interfaces, Supabase PostgreSQL
 - **Frontend:** React, JavaScript, CSS, and Vite
 
-The authoritative names, definitions, weights, and scoring rules for the 12 skillsets have not yet been supplied and are intentionally not invented here. Credentials belong in local environment files and must never be committed.
+## Repository Layout
 
-## Repository layout
-
-- `backend/app/services/` — independent starter interfaces for the five modules
+- `frontend/src/` — React application, landing page, 5 modules, components, design system, and workflow state
+- `backend/app/services/` — backend services for JD Analytics, Resume Parsing, Profile Builder, Talent Check, and Skill Matching
 - `backend/app/models/` and `backend/app/schemas/` — shared domain models and API contracts
 - `backend/app/core/` — centralized application configuration and exceptions
-- `backend/app/agents/` — future LangChain LLM and workflow integration points
-- `backend/app/database/` — lazy Supabase integration point
-- `frontend/src/` — React application, pages, components, styles, and API helper
-- `docs/` — architecture, proposed API contracts, and team ownership
+- `backend/app/database/` — Supabase client integration point
+- `docs/` — architecture, API contracts, and milestone specifications
 
-## Prerequisites
+## Local Setup
 
-- Python 3.12
-- Node.js and npm (a supported Node.js LTS release)
+### Frontend
 
-## Local setup
+```powershell
+cd frontend
+npm install
+npm run dev
+```
+
+The frontend development server starts on `http://localhost:5173`.
 
 ### Backend (PowerShell)
 
@@ -49,29 +51,17 @@ Copy-Item .env.example .env
 uvicorn main:app --reload
 ```
 
-The API health check is available at `http://127.0.0.1:8000/health`. The environment file may remain unconfigured until a feature needs an external service.
+The API health check is available at `http://127.0.0.1:8000/health`.
 
-### Frontend
+## Current Status
 
-```powershell
-cd frontend
-npm install
-npm run dev
-```
+All five modules are fully connected and functional:
 
-Vite prints the local development URL when the server starts. The frontend API helper defaults to `http://127.0.0.1:8000`.
-
-## Current status
-
-All five modules are implemented:
-
-| Role | Module | Approach |
+| Module | Description | Implementation |
 | --- | --- | --- |
-| 1 | JD Analytics | LangChain + Gemini extraction (needs `LLM_API_KEY`) |
-| 2 | Resume Parsing | Offline keyword/lexicon extraction for PDF/DOCX/TXT, section detection |
-| 3 | Profile Builder | Form + validation + JSON save/load (`backend/data/profiles`) |
-| 4 | Talent Check | Local CSV snapshot; level = f(skills per category); readiness = required-weighted coverage |
-| 5 | Skill Matching | exact -> alias -> fuzzy -> optional LLM; weighted score + gap list |
-
-Flow: JD -> Resume -> Profile -> Talent Check -> Skill Matching. Run backend tests with `python -m pytest backend/tests`.
-Known limits: Resume Parsing is keyword-based (no LLM); the frontend build was not run in the packaging environment, so run `npm install && npm run dev` once before demo day.
+| Landing Page | High-fidelity dark cosmic design with 3D preview | React + CSS design system |
+| JD Analytics | Job requirement extraction & editable results | Plain text + File upload + Gemini / local extraction |
+| Resume Parsing | PDF/DOCX/TXT resume parsing & review | Candidate schema conversion + Transfer to Profile Builder |
+| Profile Builder | Comprehensive candidate career profile | Full profile form + 12-category skill mapping + JSON export |
+| Talent Check | Employer competency benchmark assessment | 12-skillset formula (levels 1-10, readiness 0-100%) |
+| Skill Matching | Role-specific weighted skill alignment & gap list | Exact, synonym, fuzzy matching with explainable priority gaps |

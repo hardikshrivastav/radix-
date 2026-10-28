@@ -1,5 +1,5 @@
 /**
- * Centralized API service for RADIX Talent Match.
+ * Centralized API service for SkillSync Career-Readiness Platform.
  * Role 1 (JD Analytics) functions are fully implemented.
  * Roles 2-5 functions are clearly-marked stubs matching docs/api-contracts.md.
  */

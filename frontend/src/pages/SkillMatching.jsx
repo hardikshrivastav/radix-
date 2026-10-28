@@ -1,283 +1,308 @@
-import React, { useEffect, useState } from "react";
-import PageHeader from "../components/PageHeader";
-import CategoryBadge, { CATEGORY_NAMES } from "../components/CategoryBadge";
-import { Button, Card, ErrorBanner, StatTile } from "../components/UIComponents";
+import React from "react";
 import { useWorkflow } from "../state/WorkflowContext";
-import { getJdResult, listJdResults, matchSkills } from "../services/api";
-
-const PRIORITY = {
-  critical: { label: "Critical", bg: "#fef2f2", fg: "#b91c1c", bd: "#fecaca" },
-  important: { label: "Important", bg: "#fffbeb", fg: "#b45309", bd: "#fde68a" },
-  nice_to_have: { label: "Nice to have", bg: "#f8fafc", fg: "#64748b", bd: "#e2e8f0" },
-};
-const MATCH_LABEL = { exact: "Exact", alias: "Synonym", fuzzy: "Fuzzy", semantic: "AI-inferred" };
-
-function scoreColor(score) {
-  if (score >= 80) return "#047857";
-  if (score >= 60) return "#1d4ed8";
-  if (score >= 40) return "#b45309";
-  return "#b91c1c";
-}
-
-function Pill({ bg, fg, bd, children }) {
-  return (
-    <span style={{ background: bg, color: fg, border: `1px solid ${bd}`, borderRadius: 9999, padding: "2px 8px", fontSize: 11, fontWeight: 600 }}>
-      {children}
-    </span>
-  );
-}
-
-function ScoreRing({ score }) {
-  const r = 52;
-  const c = 2 * Math.PI * r;
-  const color = scoreColor(score);
-  return (
-    <svg width="132" height="132" viewBox="0 0 132 132" role="img" aria-label={`Match score ${score}%`}>
-      <circle cx="66" cy="66" r={r} fill="none" stroke="#e2e8f0" strokeWidth="10" />
-      <circle
-        cx="66" cy="66" r={r} fill="none" stroke={color} strokeWidth="10" strokeLinecap="round"
-        strokeDasharray={`${(score / 100) * c} ${c}`} transform="rotate(-90 66 66)"
-      />
-      <text x="66" y="66" textAnchor="middle" fontSize="30" fontWeight="800" fill={color}>{score}</text>
-      <text x="66" y="86" textAnchor="middle" fontSize="11" fill="#64748b">out of 100</text>
-    </svg>
-  );
-}
+import { OFFICIAL_JOB_DESCRIPTIONS } from "../data/radixData";
 
 export default function SkillMatching() {
-  const { state, setActiveModule, setMatchResult, setJdResult } = useWorkflow();
-  const { jdResult, profile, resumeResult, matchResult } = state;
+  const { state, selectTargetJd, setActiveTab } = useWorkflow();
+  const { currentCandidate, targetJd, matchResult, jdResult } = state;
 
-  const [useLlm, setUseLlm] = useState(true);
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState(null);
+  const score = matchResult?.match_score || 0;
+  const matched = matchResult?.matched_skills || [];
+  const missing = matchResult?.missing_skills || [];
+  const activeJd = targetJd || OFFICIAL_JOB_DESCRIPTIONS[0];
 
-  const [savedJds, setSavedJds] = useState([]);
-  const [manualSkills, setManualSkills] = useState("");
-
-  // Saved JD analyses (Role 1 history) so the user can pick which posting to match against.
-  useEffect(() => {
-    let cancelled = false;
-    listJdResults()
-      .then((rows) => !cancelled && setSavedJds((rows || []).filter((j) => j.skill_count > 0)))
-      .catch(() => {});
-    return () => { cancelled = true; };
-  }, [jdResult?.id]);
-
-  async function handlePickJd(id) {
-    if (!id) return;
-    setError(null);
-    try {
-      setJdResult(await getJdResult(id));
-      setMatchResult(null);
-    } catch (err) {
-      setError(err.message || "Could not load that JD analysis.");
-    }
+  // List of candidate jobs: custom analyzed JD (if present) + the 6 benchmark JDs
+  const availableJds = [];
+  if (jdResult && !OFFICIAL_JOB_DESCRIPTIONS.some((j) => j.id === jdResult.id)) {
+    availableJds.push({
+      id: jdResult.id,
+      role: `${jdResult.role} [Analyzed JD]`,
+      company: jdResult.company,
+      data: jdResult,
+    });
   }
-
-  // Candidate comes from Role 3 (profile) or Role 2 (resume); typed skills are a fallback.
-  const typedSkills = manualSkills.split(/[,\n;]/).map((s) => s.trim()).filter(Boolean);
-  const candidate = profile?.skills?.length ? profile : resumeResult;
-  const hasUpstream = Boolean(candidate?.skills?.length);
-  const candidateKind = candidate === profile ? "Saved profile" : resumeResult ? "Parsed resume" : null;
-  const candidateSkillCount = hasUpstream ? candidate.skills.length : typedSkills.length;
-  const canRun = Boolean(jdResult?.skills?.length && candidateSkillCount);
-
-  async function handleRun() {
-    setIsLoading(true);
-    setError(null);
-    try {
-      const result = await matchSkills({
-        jdId: jdResult.id,
-        jd: jdResult,
-        profile: hasUpstream && candidate === profile ? profile : null,
-        resume: hasUpstream && candidate === resumeResult ? resumeResult : null,
-        candidateSkills: hasUpstream ? null : typedSkills,
-        useLlm,
-      });
-      setMatchResult(result);
-    } catch (err) {
-      setError(err.message || "Skill matching failed.");
-    } finally {
-      setIsLoading(false);
-    }
-  }
-
-  const r = matchResult;
+  OFFICIAL_JOB_DESCRIPTIONS.forEach((j) => {
+    availableJds.push({
+      id: j.id,
+      role: j.role,
+      company: j.company,
+      data: j,
+    });
+  });
 
   return (
-    <div>
-      <PageHeader
-        eyebrow="STEP 5 OF 5 · ROLE 5"
-        title="Skill Matching"
-        subtitle="See exactly how well the candidate matches one specific job posting — with the gaps that matter most first."
-        backAction={() => setActiveModule(null)}
-      />
+    <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
+      {/* Header */}
+      <div>
+        <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "4px" }}>
+          <span
+            style={{
+              fontSize: "11px",
+              fontWeight: 700,
+              color: "var(--primary)",
+              background: "var(--primary-subtle)",
+              padding: "2px 8px",
+              borderRadius: "var(--radius-full)",
+            }}
+          >
+            ROLE 5 · SKILL MATCHING
+          </span>
+          <span style={{ fontSize: "12px", color: "var(--text-muted)" }}>
+            Posting-Specific Skill Alignment & Gap Analysis
+          </span>
+        </div>
+        <h1 style={{ fontSize: "22px", fontWeight: 800, margin: "0 0 4px 0", color: "var(--text-primary)" }}>
+          Target Job Fit & Skill Matching
+        </h1>
+        <p style={{ margin: 0, color: "var(--text-secondary)", fontSize: "13.5px" }}>
+          Evaluates <strong>{currentCandidate.name}</strong> against <strong>{activeJd.role}</strong> at{" "}
+          <strong>{activeJd.company}</strong> using explainable deterministic matching logic.
+        </p>
+      </div>
 
-      <Card style={{ maxWidth: 900, margin: "0 auto 24px", borderTop: "4px solid var(--accent-mod-5)" }}>
-        <h3 style={{ margin: "0 0 12px", fontSize: 16 }}>Inputs</h3>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 12 }}>
-          <div style={{ background: "var(--bg-subtle)", padding: 14, borderRadius: "var(--radius-md)", fontSize: 13 }}>
-            <div style={{ fontWeight: 700, marginBottom: 4 }}>📄 Job description (Role 1)</div>
-            {jdResult?.skills?.length ? (
-              <span style={{ color: "#15803d", fontWeight: 600 }}>
-                {jdResult.company ? `${jdResult.company} · ` : ""}{jdResult.role || jdResult.source_file} — {jdResult.skills.length} skills
-              </span>
-            ) : (
-              <span style={{ color: "var(--text-muted)" }}>No JD analysed yet. Complete Step 1 (JD Analytics).</span>
-            )}
-            {savedJds.length > 0 && (
-              <select
-                aria-label="Choose a saved JD analysis"
-                value={jdResult?.id || ""}
-                onChange={(e) => handlePickJd(e.target.value)}
-                style={{ display: "block", marginTop: 8, width: "100%", padding: 6, fontSize: 13 }}
-              >
-                <option value="">Pick a previously analysed JD…</option>
-                {savedJds.map((j) => (
-                  <option key={j.id} value={j.id}>
-                    {(j.company ? `${j.company} · ` : "") + (j.role || j.source_file)} ({j.skill_count} skills)
-                  </option>
-                ))}
-              </select>
-            )}
+      {/* Target JD Selection Strip */}
+      <div
+        className="card"
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          flexWrap: "wrap",
+          gap: "12px",
+          padding: "14px 20px",
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
+          <span style={{ fontSize: "12.5px", fontWeight: 700, color: "var(--text-muted)" }}>
+            SELECT TARGET ROLE:
+          </span>
+          <select
+            className="select-input"
+            value={activeJd.id}
+            onChange={(e) => {
+              const selectedItem = availableJds.find((j) => j.id === e.target.value);
+              if (selectedItem) selectTargetJd(selectedItem.data);
+            }}
+            style={{ minWidth: "280px", fontWeight: 600 }}
+          >
+            {availableJds.map((j) => (
+              <option key={j.id} value={j.id}>
+                💼 {j.role} ({j.company})
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <button onClick={() => setActiveTab("jd-analytics")} className="btn-secondary btn-sm">
+          Inspect / Edit JD in JD Analytics →
+        </button>
+      </div>
+
+      {/* Match Score Hero Card */}
+      <div
+        className="card"
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          flexWrap: "wrap",
+          gap: "16px",
+          borderLeft: `4px solid ${score >= 75 ? "var(--emerald)" : "var(--primary)"}`,
+        }}
+      >
+        <div>
+          <div style={{ fontSize: "11px", fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase" }}>
+            Posting Skill Alignment Score
           </div>
-          <div style={{ background: "var(--bg-subtle)", padding: 14, borderRadius: "var(--radius-md)", fontSize: 13 }}>
-            <div style={{ fontWeight: 700, marginBottom: 4 }}>👤 Candidate (Role 2 / 3)</div>
-            {hasUpstream ? (
-              <span style={{ color: "#15803d", fontWeight: 600 }}>
-                {(candidate.name || candidate.candidate_name) ? `${candidate.name || candidate.candidate_name} · ` : ""}{candidateKind} — {candidateSkillCount} skills
-              </span>
-            ) : (
-              <span style={{ color: "var(--text-muted)" }}>No profile or resume skills yet. Complete Step 2 or 3.</span>
-            )}
-            {!hasUpstream && (
-              <textarea
-                aria-label="Type candidate skills"
-                placeholder="Or type skills, comma-separated (Python, SQL, Docker…)"
-                value={manualSkills}
-                onChange={(e) => setManualSkills(e.target.value)}
-                rows={2}
-                style={{ display: "block", marginTop: 8, width: "100%", padding: 6, fontSize: 13, boxSizing: "border-box" }}
-              />
-            )}
+          <div style={{ display: "flex", alignItems: "baseline", gap: "12px", margin: "4px 0" }}>
+            <span
+              style={{
+                fontSize: "42px",
+                fontWeight: 900,
+                color: score >= 75 ? "var(--emerald)" : score >= 50 ? "var(--amber)" : "var(--rose)",
+                letterSpacing: "-0.04em",
+              }}
+            >
+              {score}%
+            </span>
+            <span style={{ fontSize: "16px", fontWeight: 700, color: "var(--text-secondary)" }}>
+              {matchResult?.verdict}
+            </span>
+          </div>
+          <div style={{ fontSize: "12.5px", color: "var(--text-muted)", marginBottom: "4px" }}>
+            {matched.length} requirements verified in candidate profile · {missing.length} missing skill gaps identified
+          </div>
+          <div style={{ fontSize: "11px", color: "var(--amber)", fontWeight: 600 }}>
+            ℹ️ Notice: The match score is an explainable estimate of technical skill alignment, not a probability or guarantee of being hired.
           </div>
         </div>
 
-        <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 13, margin: "14px 0", color: "var(--text-secondary)" }}>
-          <input type="checkbox" checked={useLlm} onChange={(e) => setUseLlm(e.target.checked)} />
-          Use AI to catch skills described differently (falls back to fuzzy matching if unavailable)
-        </label>
+        <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+          <button onClick={() => setActiveTab("profile-builder")} className="btn-primary">
+            👤 Update Profile in Profile Builder
+          </button>
+        </div>
+      </div>
 
-        <ErrorBanner message={error} onRetry={canRun ? handleRun : undefined} />
-        <Button onClick={handleRun} isLoading={isLoading} disabled={!canRun}>
-          {r ? "Re-run matching" : "Run skill matching"}
-        </Button>
-      </Card>
-
-      {r && (
-        <div style={{ maxWidth: 900, margin: "0 auto", display: "flex", flexDirection: "column", gap: 20 }}>
-          <Card>
-            <div style={{ display: "flex", gap: 24, alignItems: "center", flexWrap: "wrap" }}>
-              <ScoreRing score={r.match_score} />
-              <div style={{ flex: 1, minWidth: 240 }}>
-                <div style={{ fontSize: 22, fontWeight: 800, color: scoreColor(r.match_score) }}>{r.verdict}</div>
-                <p style={{ margin: "6px 0 12px", color: "var(--text-secondary)", fontSize: 14 }}>{r.summary}</p>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10 }}>
-                  <StatTile label="Matched" value={r.matched_skills.length} />
-                  <StatTile label="Missing" value={r.missing_skills.length} />
-                  <StatTile label="JD skills" value={r.total_jd_skills} />
-                </div>
-              </div>
-            </div>
-            <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 12 }}>
-              {r.candidate_name ? `${r.candidate_name} vs ` : ""}{r.company ? `${r.company} · ` : ""}{r.role || r.jd_source_file}
-              {r.used_llm ? " · AI-assisted matching" : ""}
-            </div>
-          </Card>
-
-          <Card>
-            <h3 style={{ margin: "0 0 4px", fontSize: 16 }}>🎯 Skill gaps — close these first ({r.missing_skills.length})</h3>
-            <p style={{ margin: "0 0 12px", fontSize: 13, color: "var(--text-muted)" }}>Ordered by how strongly the JD requires each skill.</p>
-            {r.missing_skills.length === 0 ? (
-              <div style={{ color: "#047857", fontWeight: 600 }}>No gaps — the candidate covers every required skill. 🎉</div>
-            ) : (
-              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                {r.missing_skills.map((m) => {
-                  const p = PRIORITY[m.priority] || PRIORITY.important;
-                  return (
-                    <div key={m.skill_name} className="skill-card">
-                      <div className="skill-card-top">
-                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                          <CategoryBadge code={m.category_code} />
-                          <span className="skill-title">{m.skill_name}</span>
-                        </div>
-                        <Pill bg={p.bg} fg={p.fg} bd={p.bd}>{p.label}</Pill>
-                      </div>
-                      {m.evidence && <div className="skill-evidence">“{m.evidence}”</div>}
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </Card>
-
-          <Card>
-            <h3 style={{ margin: "0 0 12px", fontSize: 16 }}>✅ Matched skills ({r.matched_skills.length})</h3>
-            {r.matched_skills.length === 0 ? (
-              <div style={{ color: "var(--text-muted)" }}>No overlap found.</div>
-            ) : (
-              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                {r.matched_skills.map((m) => (
-                  <div key={m.skill_name} className="skill-card">
-                    <div className="skill-card-top">
-                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                        <CategoryBadge code={m.category_code} />
-                        <span className="skill-title">{m.skill_name}</span>
-                        {m.candidate_skill && m.candidate_skill.toLowerCase() !== m.skill_name.toLowerCase() && (
-                          <span style={{ fontSize: 12, color: "var(--text-muted)" }}>← {m.candidate_skill}</span>
-                        )}
-                      </div>
-                      <Pill bg="#ecfdf5" fg="#047857" bd="#a7f3d0">{MATCH_LABEL[m.match_type] || m.match_type}</Pill>
-                    </div>
-                    {m.evidence && <div className="skill-evidence">{m.evidence}</div>}
-                  </div>
-                ))}
-              </div>
-            )}
-          </Card>
-
-          {r.category_breakdown?.length > 0 && (
-            <Card>
-              <h3 style={{ margin: "0 0 12px", fontSize: 16 }}>Coverage by category</h3>
-              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                {r.category_breakdown.map((c) => (
-                  <div key={c.category_code}>
-                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, marginBottom: 3 }}>
-                      <span><strong>{c.category_code}</strong> · {CATEGORY_NAMES[c.category_code] || c.category_code}</span>
-                      <span style={{ color: "var(--text-muted)" }}>{c.matched}/{c.required} · {c.score}%</span>
-                    </div>
-                    <div style={{ height: 8, background: "#e2e8f0", borderRadius: 9999 }}>
-                      <div style={{ width: `${c.score}%`, height: "100%", background: scoreColor(c.score), borderRadius: 9999 }} />
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </Card>
-          )}
-
-          {r.extra_candidate_skills?.length > 0 && (
-            <Card>
-              <h3 style={{ margin: "0 0 8px", fontSize: 16 }}>Extra strengths not asked for in this JD</h3>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                {r.extra_candidate_skills.map((s) => (
-                  <Pill key={s} bg="#f1f5f9" fg="#334155" bd="#cbd5e1">{s}</Pill>
-                ))}
-              </div>
-            </Card>
-          )}
+      {/* Practical Recommendations Card */}
+      {missing.length > 0 && (
+        <div className="card" style={{ background: "var(--bg-subtle)", border: "1px solid var(--border-light)" }}>
+          <h2 className="card-title" style={{ fontSize: "14px", marginBottom: "8px", color: "var(--primary)" }}>
+            💡 Practical Recommendations for Improving Alignment with {activeJd.company}
+          </h2>
+          <ul style={{ margin: 0, paddingLeft: "18px", fontSize: "12.5px", color: "var(--text-secondary)", lineHeight: 1.6 }}>
+            <li>
+              <strong>Prioritize Critical Gaps:</strong> Target highest-weighted missing competencies (
+              {missing.filter((m) => m.priority === "critical").map((m) => m.skill_name).join(", ") || "None"}
+              ) by implementing a focused repository or technical case study.
+            </li>
+            <li>
+              <strong>Update Profile Terminology:</strong> Verify whether you possess synonymous skills (e.g., if the JD requires "{missing[0]?.skill_name}", ensure your profile explicitly mentions it).
+            </li>
+            <li>
+              <strong>Bridge Preferred Skills:</strong> For nice-to-have requirements, demonstrate familiarity through short-form certifications or hackathon prototypes.
+            </li>
+          </ul>
         </div>
       )}
+
+      {/* Two Column Grid: Matched Skills vs Missing Skills */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(360px, 1fr))", gap: "16px" }}>
+        {/* Missing Skills (Gap List - Prioritized) */}
+        <div className="card">
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
+            <h2 className="card-title" style={{ margin: 0, color: "var(--rose)" }}>
+              ⚠️ Missing Skills Gap List ({missing.length})
+            </h2>
+            <span style={{ fontSize: "11px", color: "var(--text-muted)" }}>Prioritized by weight</span>
+          </div>
+
+          {missing.length === 0 ? (
+            <div style={{ fontSize: "13px", color: "var(--emerald)", padding: "12px", background: "var(--emerald-subtle)", borderRadius: "var(--radius-sm)" }}>
+              ✓ Outstanding match! All required competencies found in candidate profile.
+            </div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+              {missing.map((sk, idx) => (
+                <div
+                  key={`${sk.skill_name}-${idx}`}
+                  style={{
+                    padding: "10px 12px",
+                    borderRadius: "var(--radius-sm)",
+                    background: "var(--bg-subtle)",
+                    border: "1px solid var(--border-light)",
+                    borderLeft: `3px solid ${sk.priority === "critical" ? "var(--rose)" : "var(--amber)"}`,
+                  }}
+                >
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "4px" }}>
+                    <span style={{ fontWeight: 700, fontSize: "13px", color: "var(--text-primary)" }}>
+                      {sk.skill_name}
+                    </span>
+                    <div style={{ display: "flex", gap: "6px" }}>
+                      <span className="category-tag">{sk.category_code}</span>
+                      <span
+                        style={{
+                          fontSize: "10px",
+                          fontWeight: 700,
+                          textTransform: "uppercase",
+                          padding: "1px 5px",
+                          borderRadius: "4px",
+                          background: sk.priority === "critical" ? "var(--rose-subtle)" : "var(--amber-subtle)",
+                          color: sk.priority === "critical" ? "var(--rose)" : "var(--amber)",
+                        }}
+                      >
+                        {sk.priority}
+                      </span>
+                    </div>
+                  </div>
+                  <div style={{ fontSize: "11.5px", color: "var(--text-muted)", lineHeight: 1.4 }}>
+                    {sk.evidence || "Explicit requirement in job posting"}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Matched Skills */}
+        <div className="card">
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
+            <h2 className="card-title" style={{ margin: 0, color: "var(--emerald)" }}>
+              ✓ Verified Matched Skills ({matched.length})
+            </h2>
+            <span style={{ fontSize: "11px", color: "var(--text-muted)" }}>Verified in profile</span>
+          </div>
+
+          <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+            {matched.map((sk, idx) => (
+              <div
+                key={`${sk.skill_name}-${idx}`}
+                style={{
+                  padding: "10px 12px",
+                  borderRadius: "var(--radius-sm)",
+                  background: "var(--bg-subtle)",
+                  border: "1px solid var(--border-light)",
+                  borderLeft: "3px solid var(--emerald)",
+                }}
+              >
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "4px" }}>
+                  <span style={{ fontWeight: 700, fontSize: "13px", color: "var(--text-primary)" }}>
+                    {sk.skill_name}
+                  </span>
+                  <div style={{ display: "flex", gap: "6px" }}>
+                    <span className="category-tag">{sk.category_code}</span>
+                    <span style={{ fontSize: "10px", color: "var(--emerald)", fontWeight: 700 }}>
+                      {sk.match_type || "MATCH"}
+                    </span>
+                  </div>
+                </div>
+                <div style={{ fontSize: "11.5px", color: "var(--text-muted)", lineHeight: 1.4 }}>
+                  {sk.evidence || "Demonstrated in candidate profile"}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* Connected Workflow Actions Bar */}
+      <div className="card" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "12px", padding: "16px 20px" }}>
+        <div>
+          <div style={{ fontSize: "13px", fontWeight: 700, color: "var(--text-primary)" }}>
+            Next Step: Comprehensive Executive Review
+          </div>
+          <div style={{ fontSize: "12px", color: "var(--text-muted)" }}>
+            You have evaluated job alignment ({score}%). See the complete synthesized result across all 5 features in the Unified Report.
+          </div>
+        </div>
+
+        <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+          <button
+            onClick={() => setActiveTab("jd-analytics")}
+            className="btn-secondary btn-sm"
+          >
+            📄 Analyze Different JD (Role 1) →
+          </button>
+          <button
+            onClick={() => setActiveTab("profile-builder")}
+            className="btn-secondary btn-sm"
+          >
+            👤 Refine Profile (Role 3) →
+          </button>
+          <button
+            onClick={() => setActiveTab("talent-check")}
+            className="btn-secondary btn-sm"
+          >
+            🎯 Talent Check (Role 4) →
+          </button>
+          <button
+            onClick={() => setActiveTab("unified-report")}
+            className="btn-primary btn-sm"
+          >
+            📊 View Unified 5-in-1 Report →
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
