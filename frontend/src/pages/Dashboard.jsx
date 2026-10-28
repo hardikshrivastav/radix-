@@ -1,261 +1,365 @@
-import React from "react";
+import React, { useState } from "react";
 import { useWorkflow } from "../state/WorkflowContext";
-import { Card, StatusBadge } from "../components/UIComponents";
-import CategoryBadge, { CATEGORY_NAMES } from "../components/CategoryBadge";
+import {
+  OFFICIAL_JOB_DESCRIPTIONS,
+  COMPANY_BENCHMARKS,
+  SKILL_CATEGORIES,
+} from "../data/radixData";
+import {
+  extractTextFromResumeFile,
+  parseResumeText,
+} from "../services/careerEngine";
 
-export default function Dashboard({ onSelectModule }) {
-  const { state, resetWorkflow } = useWorkflow();
+export default function Dashboard() {
   const {
-    selectedCompany,
-    targetRole,
-    jdResult,
-    resumeResult,
-    profile,
+    state,
+    setActiveTab,
+    selectCompany,
+    selectTargetJd,
+    uploadCustomCv,
+    loadDemoSample,
+    resetCandidate,
+  } = useWorkflow();
+
+  const {
+    currentCandidate,
+    targetJd,
+    targetCompany,
     talentCheckResult,
     matchResult,
-    completedSteps,
+    hasUploadedCv,
   } = state;
 
-  const completedCount = Object.values(completedSteps).filter(Boolean).length;
-  const progressPct = Math.round((completedCount / 5) * 100);
+  const [inputMode, setInputMode] = useState("file");
+  const [selectedFile, setSelectedFile] = useState(null);
+  const [pastedText, setPastedText] = useState("");
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [uploadError, setUploadError] = useState(null);
+  const [uploadSuccess, setUploadSuccess] = useState(null);
 
-  const modules = [
-    {
-      id: "jd-analytics",
-      step: 1,
-      name: "Role 1: JD Analytics",
-      roleOwner: "Team Member #1 (Active)",
-      accent: "var(--accent-mod-1)",
-      description: "Extract technical requirements and competencies from a Job Description (PDF/DOCX) mapped to the 12 RADIX categories.",
-      inputs: ["Job Description (PDF / DOCX / Text)", "Company & Role"],
-      outputs: ["12-Category JDSkillList JSON", "Evidence Quotes"],
-      isCompleted: Boolean(completedSteps[1]),
-      isOwner: true,
-      detail: jdResult ? `${jdResult.skills.length} skills extracted for ${jdResult.company || "Target Company"}` : null,
-    },
-    {
-      id: "resume-parsing",
-      step: 2,
-      name: "Role 2: Resume Parsing",
-      roleOwner: "Team Member #2",
-      accent: "var(--accent-mod-2)",
-      description: "Parse candidate resume document and extract candidate skills, work experience, and educational background.",
-      inputs: ["Candidate Resume (.pdf / .docx)"],
-      outputs: ["Resume Skills JSON (source_type: 'resume')"],
-      isCompleted: Boolean(completedSteps[2]),
-      isOwner: false,
-      detail: resumeResult ? "Resume analyzed" : "Awaiting Resume upload",
-    },
-    {
-      id: "profile-builder",
-      step: 3,
-      name: "Role 3: Profile Builder",
-      roleOwner: "Team Member #3",
-      accent: "var(--accent-mod-3)",
-      description: "Synthesize resume skills, hackathons, internships, and role preferences into a unified candidate profile.",
-      inputs: ["Parsed Resume Skills", "Candidate Form Inputs"],
-      outputs: ["Unified Candidate Profile JSON"],
-      isCompleted: Boolean(completedSteps[3]),
-      isOwner: false,
-      detail: profile ? profile.name : "Awaiting profile synthesis",
-    },
-    {
-      id: "talent-check",
-      step: 4,
-      name: "Role 4: Talent Check",
-      roleOwner: "Team Member #4",
-      accent: "var(--accent-mod-4)",
-      description: "Assess candidate readiness against benchmarked company hiring expectations across the 12 skill categories.",
-      inputs: ["Candidate Profile", "Company Benchmarks"],
-      outputs: ["Category Gap Matrix (1-10)", "Readiness Score (0-100)"],
-      isCompleted: Boolean(completedSteps[4]),
-      isOwner: false,
-      detail: talentCheckResult ? `Score: ${talentCheckResult.readiness_score}/100` : "Awaiting assessment",
-    },
-    {
-      id: "skill-matching",
-      step: 5,
-      name: "Role 5: Skill Matching",
-      roleOwner: "Team Member #5",
-      accent: "var(--accent-mod-5)",
-      description: "Compare candidate profile directly against JD requirements to generate match score and identify upskilling gaps.",
-      inputs: ["JD Skills (from Role 1)", "Candidate Profile (from Role 3)"],
-      outputs: ["Match Score (0-100)", "Matched Skills", "Missing Skills"],
-      isCompleted: Boolean(completedSteps[5]),
-      isOwner: false,
-      detail: matchResult ? `Match: ${matchResult.match_score}%` : "Awaiting matching",
-    },
+  const readinessScore = talentCheckResult?.readiness_score || 0;
+  const matchScore = matchResult?.match_score || 0;
+  const skillsetGaps = talentCheckResult?.skillset_gap || [];
+  const gapsCount = skillsetGaps.filter((g) => g.gap).length;
+  const meetsCount = skillsetGaps.filter((g) => !g.gap).length;
+
+  const profileCompletion = hasUploadedCv ? 80 : 0;
+  const jobsAnalyzed = targetJd ? 1 : 0;
+  const resumesParsed = hasUploadedCv ? 1 : 0;
+  const skillAssessments = talentCheckResult ? 1 : 0;
+  const jobMatches = matchResult ? 1 : 0;
+
+  const handleProcessCv = async (e) => {
+    if (e) e.preventDefault();
+    setUploadError(null);
+    setUploadSuccess(null);
+
+    // If in file mode and user hasn't selected a file yet, open the file picker!
+    if (inputMode === "file" && !selectedFile) {
+      const fileInput = document.getElementById("cv-file-input");
+      if (fileInput) {
+        fileInput.click();
+      } else {
+        setUploadError("Please select a resume file (.pdf, .docx, or .txt).");
+      }
+      return;
+    }
+
+    if (inputMode === "text" && (!pastedText.trim() || pastedText.trim().length < 20)) {
+      setUploadError("Please paste at least 20 characters of resume content.");
+      return;
+    }
+
+    let textContent = "";
+    let fileName = "candidate_resume.txt";
+    setIsProcessing(true);
+    try {
+      if (inputMode === "file") {
+        fileName = selectedFile.name;
+        textContent = await extractTextFromResumeFile(selectedFile);
+      } else {
+        textContent = pastedText;
+        fileName = "pasted_resume.txt";
+      }
+      const parsedProfile = parseResumeText(textContent, fileName);
+      uploadCustomCv(parsedProfile);
+      setUploadSuccess(`Profile extracted successfully for ${parsedProfile.name || "Candidate"}! ${parsedProfile.skills?.length || 0} skills categorized.`);
+      setSelectedFile(null);
+      setPastedText("");
+    } catch (err) {
+      setUploadError(err.message || "Failed to parse resume.");
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const progressCards = [
+    { bg: "#dcfce7", icon: "👤", value: `${profileCompletion}%`, title: "Profile Completion", sub: "Complete remaining details to get better recommendations." },
+    { bg: "#dbeafe", icon: "💼", value: jobsAnalyzed, title: "Jobs Analyzed", sub: "Job descriptions analyzed and saved." },
+    { bg: "#ede9fe", icon: "📄", value: resumesParsed, title: "Resumes Parsed", sub: "Resumes uploaded and processed." },
+    { bg: "#ffedd5", icon: "📊", value: skillAssessments, title: "Skill Assessments", sub: "Talent check assessments completed." },
+    { bg: "#fce7f3", icon: "🎯", value: jobMatches, title: "Job Matches", sub: "Job match analyses generated." },
+  ];
+
+  const quickActions = [
+    { color: "#8b5cf6", icon: "📄", title: "JD Analytics", sub: "Analyze a job description and extract key requirements.", tab: "jd-analytics" },
+    { color: "#10b981", icon: "📑", title: "Resume Parsing", sub: "Upload your resume and extract structured insights.", tab: "resume-parsing" },
+    { color: "#f59e0b", icon: "👤", title: "Profile Builder", sub: "Create or update your career-ready profile.", tab: "profile-builder" },
+    { color: "#ec4899", icon: "📊", title: "Talent Check", sub: "Assess your skills against company benchmarks.", tab: "talent-check" },
+    { color: "#3b82f6", icon: "🎯", title: "Skill Matching", sub: "Find the best job opportunities based on your profile.", tab: "skill-matching" },
   ];
 
   return (
-    <div>
-      {/* Hero Header */}
-      <div
-        style={{
-          background: "linear-gradient(180deg, #ffffff 0%, #f8fafc 100%)",
-          border: "1px solid var(--border-light)",
-          borderRadius: "var(--radius-xl)",
-          padding: "36px 32px",
-          marginBottom: "28px",
-          boxShadow: "var(--shadow-card)",
-        }}
-      >
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: "20px" }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
+      {/* Welcome Banner */}
+      <div className="card" style={{
+        background: "linear-gradient(135deg, #dbeafe 0%, #ede9fe 100%)",
+        padding: "24px 28px",
+        display: "flex",
+        justifyContent: "space-between",
+        alignItems: "center",
+        flexWrap: "wrap",
+        gap: "16px",
+      }}>
+        <div>
+          <h1 style={{ fontSize: "22px", fontWeight: 800, margin: "0 0 6px 0", color: "#1e293b" }}>
+            Welcome back, Tanishq! 👋
+          </h1>
+          <p style={{ margin: 0, color: "#475569", fontSize: "14px", maxWidth: "600px" }}>
+            Continue building your career with SkillSync. Analyze jobs, enhance your profile, assess your skills, and find your best opportunities.
+          </p>
+        </div>
+        <div style={{ fontSize: "48px" }}>👨‍💻</div>
+      </div>
+
+      {/* CV Upload first */}
+      <div className="card">
+        <h2 className="card-title" style={{ margin: "0 0 8px 0" }}>📄 Candidate CV Upload & Analysis</h2>
+        <div style={{ display: "flex", gap: "8px", marginBottom: "12px" }}>
+          <button onClick={() => { setInputMode("file"); setUploadError(null); setUploadSuccess(null); }} className={inputMode === "file" ? "btn-primary btn-sm" : "btn-secondary btn-sm"}>📁 File Upload</button>
+          <button onClick={() => { setInputMode("text"); setUploadError(null); setUploadSuccess(null); }} className={inputMode === "text" ? "btn-primary btn-sm" : "btn-secondary btn-sm"}>✍️ Paste Text</button>
+        </div>
+
+        {inputMode === "file" ? (
+          <div className="upload-dropzone" onClick={() => document.getElementById("cv-file-input").click()} style={{ marginBottom: "12px", cursor: "pointer" }}>
+            <input
+              id="cv-file-input"
+              type="file"
+              accept=".pdf,.docx,.txt"
+              style={{ display: "none" }}
+              onChange={(e) => {
+                if (e.target.files && e.target.files[0]) {
+                  setSelectedFile(e.target.files[0]);
+                  setUploadError(null);
+                  setUploadSuccess(null);
+                }
+              }}
+            />
+            <div style={{ fontSize: "28px", marginBottom: "6px" }}>{selectedFile ? "📄" : "📥"}</div>
+            <div style={{ fontWeight: 700, color: selectedFile ? "var(--primary)" : "var(--text-primary)" }}>
+              {selectedFile ? `Selected: ${selectedFile.name}` : "Click to select or drag resume file here"}
+            </div>
+            <div style={{ fontSize: "12px", color: "var(--text-muted)", marginTop: "2px" }}>
+              {selectedFile ? `${(selectedFile.size / 1024).toFixed(1)} KB · Ready to extract` : "Supports PDF, Word (.docx), or plain text (.txt)"}
+            </div>
+          </div>
+        ) : (
+          <textarea
+            className="textarea-input"
+            rows={4}
+            placeholder="Paste candidate resume text..."
+            value={pastedText}
+            onChange={(e) => { setPastedText(e.target.value); setUploadError(null); }}
+            style={{ marginBottom: "12px" }}
+          />
+        )}
+
+        {uploadError && (
+          <div style={{ padding: "8px 12px", borderRadius: "8px", background: "var(--rose-subtle)", border: "1px solid var(--rose-border)", color: "var(--rose)", fontSize: "12.5px", marginBottom: "12px" }}>
+            ⚠️ {uploadError}
+          </div>
+        )}
+
+        {uploadSuccess && (
+          <div style={{
+            padding: "10px 14px",
+            borderRadius: "8px",
+            background: "var(--emerald-subtle)",
+            border: "1px solid var(--emerald-border)",
+            color: "var(--emerald)",
+            fontSize: "13px",
+            fontWeight: 600,
+            marginBottom: "12px",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: "10px",
+            flexWrap: "wrap",
+          }}>
+            <span>✓ {uploadSuccess}</span>
+            <button
+              onClick={() => setActiveTab("profile-builder")}
+              className="btn-primary btn-sm"
+              style={{ padding: "4px 10px", fontSize: "11px" }}
+            >
+              View Profile Builder →
+            </button>
+          </div>
+        )}
+
+        <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
+          <button
+            onClick={handleProcessCv}
+            disabled={isProcessing}
+            className="btn-primary"
+          >
+            {isProcessing ? "Analyzing..." : "🚀 Upload & Extract Profile"}
+          </button>
+          <button onClick={loadDemoSample} className="btn-secondary btn-sm">⚡ Demo Resume</button>
+          {hasUploadedCv && <button onClick={resetCandidate} className="btn-secondary btn-sm">🔄 Reset</button>}
+        </div>
+      </div>
+
+      {/* Benchmark Target + assessments FIRST */}
+      <div className="card" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "12px", padding: "14px 18px" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
+          <span style={{ fontSize: "12px", fontWeight: 700, color: "var(--text-muted)" }}>BENCHMARK TARGET:</span>
+          <select className="select-input" value={targetCompany} onChange={(e) => selectCompany(e.target.value)} style={{ width: "auto", minWidth: "160px" }}>
+            {Object.keys(COMPANY_BENCHMARKS).map((c) => <option key={c} value={c}>🏢 {c}</option>)}
+          </select>
+          <select className="select-input" value={targetJd?.id} onChange={(e) => { const jd = OFFICIAL_JOB_DESCRIPTIONS.find((j) => j.id === e.target.value); if (jd) selectTargetJd(jd); }} style={{ width: "auto", minWidth: "200px" }}>
+            {OFFICIAL_JOB_DESCRIPTIONS.map((jd) => <option key={jd.id} value={jd.id}>💼 {jd.role} ({jd.company})</option>)}
+          </select>
+        </div>
+        <span style={{ fontSize: "12px", color: "var(--text-muted)" }}>{currentCandidate?.name || "Candidate"} · {currentCandidate?.skills?.length || 0} skills</span>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: "16px" }}>
+        <div className="card" style={{ cursor: "pointer", borderLeft: `4px solid ${readinessScore >= 75 ? "var(--emerald)" : "var(--amber)"}` }} onClick={() => setActiveTab("talent-check")}>
+          <div style={{ fontSize: "11px", fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: "6px" }}>Talent Check Readiness</div>
+          <div style={{ fontSize: "32px", fontWeight: 900, color: readinessScore >= 75 ? "var(--emerald)" : "var(--amber)" }}>{readinessScore}%</div>
+          <div style={{ fontSize: "12px", color: "var(--text-muted)", marginTop: "4px" }}>{meetsCount} meet · {gapsCount} gaps</div>
+        </div>
+        <div className="card" style={{ cursor: "pointer", borderLeft: `4px solid ${matchScore >= 75 ? "var(--emerald)" : "var(--primary)"}` }} onClick={() => setActiveTab("skill-matching")}>
+          <div style={{ fontSize: "11px", fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: "6px" }}>Skill Matching Fit</div>
+          <div style={{ fontSize: "32px", fontWeight: 900, color: matchScore >= 75 ? "var(--emerald)" : "var(--primary)" }}>{matchScore}%</div>
+          <div style={{ fontSize: "12px", color: "var(--text-muted)", marginTop: "4px" }}>{matchResult?.matched_skills?.length || 0} matched · {matchResult?.missing_skills?.length || 0} gaps</div>
+        </div>
+      </div>
+
+      {/* Your Progress */}
+      <div>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px", flexWrap: "wrap", gap: "8px" }}>
           <div>
-            <div className="eyebrow" style={{ color: "var(--primary)" }}>RADIX TALENT MATCH WORKFLOW</div>
-            <h1 style={{ fontSize: "32px", margin: "0 0 10px", letterSpacing: "-0.03em" }}>
-              Understand how ready you are for a specific job
-            </h1>
-            <p style={{ margin: "0", color: "var(--text-secondary)", fontSize: "16px", maxWidth: "700px" }}>
-              An intelligent 5-stage pipeline mapping candidate capabilities against job requirements
-              using the authoritative 12-competency framework.
-            </p>
+            <h2 style={{ fontSize: "18px", fontWeight: 800, margin: 0, color: "var(--text-primary)" }}>Your Progress</h2>
+            <p style={{ margin: "2px 0 0", fontSize: "12px", color: "var(--text-muted)" }}>Track your profile completion and activity across all modules.</p>
           </div>
-
-          {/* Overall Progress Widget */}
-          <div
-            style={{
-              background: "#ffffff",
-              border: "1px solid var(--border-light)",
-              borderRadius: "var(--radius-lg)",
-              padding: "16px 20px",
-              minWidth: "220px",
-              boxShadow: "var(--shadow-sm)",
-            }}
-          >
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
-              <span style={{ fontSize: "13px", fontWeight: 600, color: "var(--text-secondary)" }}>Pipeline Progress</span>
-              <span style={{ fontSize: "14px", fontWeight: 800, color: "var(--primary)" }}>{progressPct}%</span>
-            </div>
-            <div style={{ height: "8px", background: "var(--bg-muted)", borderRadius: "9999px", overflow: "hidden", marginBottom: "8px" }}>
-              <div
-                style={{
-                  height: "100%",
-                  width: `${progressPct}%`,
-                  background: "linear-gradient(90deg, #2563eb, #10b981)",
-                  borderRadius: "9999px",
-                  transition: "width 300ms ease",
-                }}
-              />
-            </div>
-            <div style={{ fontSize: "12px", color: "var(--text-muted)", display: "flex", justifyContent: "space-between" }}>
-              <span>{completedCount} of 5 steps done</span>
-              {completedCount > 0 && (
-                <button
-                  onClick={resetWorkflow}
-                  style={{ background: "none", border: "none", color: "#dc2626", fontSize: "11px", cursor: "pointer", textDecoration: "underline", padding: 0 }}
-                >
-                  Reset
-                </button>
-              )}
-            </div>
+          <div style={{ display: "flex", alignItems: "center", gap: "6px", padding: "6px 12px", borderRadius: "8px", background: "var(--bg-surface)", border: "1px solid var(--border-subtle)", fontSize: "12px", color: "var(--text-secondary)" }}>
+            📅 Last updated: {new Date().toLocaleString()}
           </div>
         </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: "12px" }}>
+          {progressCards.map((c) => (
+            <div key={c.title} className="card" style={{ background: c.bg, padding: "16px", textAlign: "center" }}>
+              <div style={{ fontSize: "24px", marginBottom: "6px" }}>{c.icon}</div>
+              <div style={{ fontSize: "24px", fontWeight: 900, color: "#1e293b" }}>{c.value}</div>
+              <div style={{ fontSize: "12px", fontWeight: 700, color: "#1e293b", marginTop: "4px" }}>{c.title}</div>
+              <div style={{ fontSize: "11px", color: "#475569", marginTop: "4px" }}>{c.sub}</div>
+            </div>
+          ))}
+        </div>
       </div>
 
-      {/* Selected Target Context Strip */}
-      <div className="workflow-strip">
-        <div className="strip-item">
-          <span className="strip-label">Target Company:</span>
-          <span className="strip-value" style={{ color: selectedCompany ? "var(--primary)" : "var(--text-muted)" }}>
-            {selectedCompany || "Not selected yet"}
-          </span>
+      {/* Quick Actions */}
+      <div>
+        <div style={{ marginBottom: "12px" }}>
+          <h2 style={{ fontSize: "18px", fontWeight: 800, margin: 0, color: "var(--text-primary)" }}>Quick Actions</h2>
+          <p style={{ margin: "2px 0 0", fontSize: "12px", color: "var(--text-muted)" }}>Jump into any module to continue your journey.</p>
         </div>
-        <div className="strip-item">
-          <span className="strip-label">Target Role:</span>
-          <span className="strip-value" style={{ color: targetRole ? "var(--text-primary)" : "var(--text-muted)" }}>
-            {targetRole || "Not specified"}
-          </span>
-        </div>
-        <div className="strip-item">
-          <span className="strip-label">Active JD Source:</span>
-          <span className="strip-value" style={{ color: jdResult ? "#16a34a" : "var(--text-muted)" }}>
-            {jdResult ? `✓ ${jdResult.source_file} (${jdResult.skills.length} skills)` : "No JD analyzed"}
-          </span>
-        </div>
-        <button
-          className="btn btn-primary"
-          onClick={() => onSelectModule("jd-analytics")}
-          style={{ padding: "7px 14px", fontSize: "13px" }}
-        >
-          {jdResult ? "View JD Skills →" : "Start with Step 1 (JD Analytics) →"}
-        </button>
-      </div>
-
-      {/* Module Cards Grid */}
-      <h2 style={{ fontSize: "20px", margin: "32px 0 16px", fontWeight: 700 }}>
-        The 5 Workflow Modules
-      </h2>
-
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: "20px", marginBottom: "40px" }}>
-        {modules.map((m) => (
-          <Card
-            key={m.id}
-            interactive
-            style={{
-              display: "flex",
-              flexDirection: "column",
-              justifyContent: "space-between",
-              borderTop: `4px solid ${m.accent}`,
-              position: "relative",
-            }}
-            onClick={() => onSelectModule(m.id)}
-          >
-            <div>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "12px" }}>
-                <div>
-                  <span style={{ fontSize: "12px", fontWeight: 700, color: m.accent, textTransform: "uppercase", letterSpacing: "0.06em" }}>
-                    STEP {m.step} · {m.roleOwner}
-                  </span>
-                  <h3 style={{ margin: "4px 0 0", fontSize: "18px", fontWeight: 700, color: "var(--text-primary)" }}>
-                    {m.name.split(": ")[1] || m.name}
-                  </h3>
-                </div>
-                <StatusBadge status={m.isCompleted ? "Completed" : m.isOwner ? "In progress" : "ready"} />
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "12px" }}>
+          {quickActions.map((q) => (
+            <div key={q.title} className="card" style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: "12px", padding: "14px" }} onClick={() => setActiveTab(q.tab)}>
+              <div style={{ width: "40px", height: "40px", borderRadius: "10px", background: q.color + "22", color: q.color, display: "flex", alignItems: "center", justifyContent: "center", fontSize: "18px" }}>{q.icon}</div>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: "13px", fontWeight: 700, color: "var(--text-primary)" }}>{q.title}</div>
+                <div style={{ fontSize: "11px", color: "var(--text-muted)" }}>{q.sub}</div>
               </div>
+              <div style={{ width: "28px", height: "28px", borderRadius: "50%", background: q.color, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "14px" }}>→</div>
+            </div>
+          ))}
+        </div>
+      </div>
 
-              <p style={{ fontSize: "14px", color: "var(--text-secondary)", lineHeight: 1.5, marginBottom: "16px" }}>
-                {m.description}
-              </p>
-
-              {/* Data Contracts Hand-off preview */}
-              <div style={{ background: "var(--bg-subtle)", padding: "10px 12px", borderRadius: "var(--radius-md)", marginBottom: "16px", fontSize: "12px" }}>
-                <div style={{ marginBottom: "4px" }}>
-                  <strong style={{ color: "var(--text-muted)" }}>IN: </strong>
-                  <span style={{ color: "var(--text-secondary)" }}>{m.inputs.join(", ")}</span>
+      {/* Bottom panels */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: "16px" }}>
+        {/* Recent Activity */}
+        <div className="card">
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
+            <h3 style={{ fontSize: "15px", fontWeight: 800, margin: 0, color: "var(--text-primary)" }}>Recent Activity</h3>
+            <span style={{ fontSize: "12px", color: "var(--primary)", cursor: "pointer" }}>View all</span>
+          </div>
+          {hasUploadedCv ? (
+            <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                  <span>📄</span>
+                  <div>
+                    <div style={{ fontSize: "12px", fontWeight: 600, color: "var(--text-primary)" }}>Resume parsed successfully</div>
+                    <div style={{ fontSize: "11px", color: "var(--text-muted)" }}>{currentCandidate?.name || "candidate"}</div>
+                  </div>
                 </div>
-                <div>
-                  <strong style={{ color: "var(--text-muted)" }}>OUT: </strong>
-                  <span style={{ color: "var(--text-secondary)" }}>{m.outputs.join(", ")}</span>
-                </div>
+                <span style={{ fontSize: "11px", color: "var(--text-muted)" }}>now</span>
               </div>
             </div>
+          ) : (
+            <div style={{ fontSize: "12px", color: "var(--text-muted)", textAlign: "center", padding: "20px 0" }}>No recent activity yet.</div>
+          )}
+        </div>
 
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingTop: "12px", borderTop: "1px solid var(--border-light)" }}>
-              <span style={{ fontSize: "13px", color: m.detail ? "#15803d" : "var(--text-muted)", fontWeight: 500 }}>
-                {m.detail || "Click to open module"}
-              </span>
-              <span style={{ color: m.accent, fontWeight: 700, fontSize: "14px" }}>
-                Open →
-              </span>
+        {/* Profile Checklist */}
+        <div className="card">
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
+            <h3 style={{ fontSize: "15px", fontWeight: 800, margin: 0, color: "var(--text-primary)" }}>Profile Completion Checklist</h3>
+            <span style={{ fontSize: "12px", fontWeight: 700, color: "var(--emerald)" }}>{profileCompletion >= 80 ? "4/5" : "1/5"}</span>
+          </div>
+          <div style={{ height: "6px", borderRadius: "3px", background: "var(--bg-surface)", marginBottom: "12px", overflow: "hidden" }}>
+            <div style={{ height: "100%", width: `${profileCompletion}%`, background: "var(--emerald)", borderRadius: "3px" }} />
+          </div>
+          {[
+            { label: "Basic Information", sub: "Name, email, education.", done: hasUploadedCv },
+            { label: "Skills", sub: "Add your technical and soft skills.", done: hasUploadedCv },
+            { label: "Experience", sub: "Hackathons, internships, certifications.", done: false },
+            { label: "Preferred Roles", sub: "Specify your career interests.", done: false },
+            { label: "Upload Resume", sub: "Add your latest resume for better insights.", done: hasUploadedCv },
+          ].map((item) => (
+            <div key={item.label} onClick={() => setActiveTab("profile-builder")} style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: "8px", padding: "6px 0", fontSize: "12px", color: "var(--text-secondary)" }}>
+              <span style={{ color: item.done ? "var(--emerald)" : "var(--text-muted)", fontWeight: 800 }}>{item.done ? "✓" : "○"}</span>
+              <div>
+                <div style={{ fontWeight: 600, color: "var(--text-primary)" }}>{item.label}</div>
+                <div style={{ fontSize: "11px", color: "var(--text-muted)" }}>{item.sub}</div>
+              </div>
             </div>
-          </Card>
-        ))}
-      </div>
+          ))}
+        </div>
 
-      {/* 12-Category Reference Bar */}
-      <div style={{ background: "#ffffff", border: "1px solid var(--border-light)", borderRadius: "var(--radius-lg)", padding: "24px" }}>
-        <h3 style={{ margin: "0 0 6px", fontSize: "16px", fontWeight: 700 }}>
-          Authoritative 12-Category Competency Framework
-        </h3>
-        <p style={{ margin: "0 0 16px", fontSize: "13px", color: "var(--text-secondary)" }}>
-          Every skill extracted by Role 1 and assessed across the 5 modules maps directly to one of these standardized categories:
-        </p>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: "8px" }}>
-          {Object.entries(CATEGORY_NAMES).map(([code, name]) => (
-            <div key={code} style={{ display: "inline-flex", alignItems: "center", gap: "6px", background: "var(--bg-subtle)", padding: "4px 8px", borderRadius: "var(--radius-sm)", border: "1px solid var(--border-light)" }}>
-              <CategoryBadge code={code} />
-              <span style={{ fontSize: "12px", color: "var(--text-secondary)" }}>{name}</span>
+        {/* Recommended Next Steps */}
+        <div className="card">
+          <div style={{ display: "flex", alignItems: "center", gap: "6px", marginBottom: "12px" }}>
+            <span style={{ fontSize: "16px" }}>✨</span>
+            <h3 style={{ fontSize: "15px", fontWeight: 800, margin: 0, color: "var(--text-primary)" }}>Recommended Next Steps</h3>
+          </div>
+          {[
+            { icon: "👤", title: "Complete your profile", sub: "Add missing information to improve your profile strength.", tab: "profile-builder" },
+            { icon: "📄", title: "Analyze a new job description", sub: "Find more relevant opportunities.", tab: "jd-analytics" },
+            { icon: "📊", title: "Take a talent check", sub: "Assess your skills against company benchmarks.", tab: "talent-check" },
+            { icon: "🎯", title: "Generate more job matches", sub: "Explore roles that fit your profile.", tab: "skill-matching" },
+          ].map((r) => (
+            <div key={r.title} onClick={() => setActiveTab(r.tab)} style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: "10px", padding: "8px 0", borderBottom: "1px solid var(--border-subtle)" }}>
+              <div style={{ fontSize: "16px" }}>{r.icon}</div>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: "12px", fontWeight: 600, color: "var(--text-primary)" }}>{r.title}</div>
+                <div style={{ fontSize: "11px", color: "var(--text-muted)" }}>{r.sub}</div>
+              </div>
+              <span style={{ color: "var(--primary)" }}>→</span>
             </div>
           ))}
         </div>
