@@ -111,27 +111,6 @@ export default function Dashboard() {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
-      {/* Welcome Banner */}
-      <div className="card" style={{
-        background: "linear-gradient(135deg, #dbeafe 0%, #ede9fe 100%)",
-        padding: "24px 28px",
-        display: "flex",
-        justifyContent: "space-between",
-        alignItems: "center",
-        flexWrap: "wrap",
-        gap: "16px",
-      }}>
-        <div>
-          <h1 style={{ fontSize: "22px", fontWeight: 800, margin: "0 0 6px 0", color: "#1e293b" }}>
-            Welcome back, Tanishq! 👋
-          </h1>
-          <p style={{ margin: 0, color: "#475569", fontSize: "14px", maxWidth: "600px" }}>
-            Continue building your career with SkillSync. Analyze jobs, enhance your profile, assess your skills, and find your best opportunities.
-          </p>
-        </div>
-        <div style={{ fontSize: "48px" }}>👨‍💻</div>
-      </div>
-
       {/* CV Upload first */}
       <div className="card">
         <h2 className="card-title" style={{ margin: "0 0 8px 0" }}>📄 Candidate CV Upload & Analysis</h2>
